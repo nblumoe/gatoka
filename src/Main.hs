@@ -1,4 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as BL
 import Network.Wai
 import Network.HTTP.Types
 import Network.HTTP.Types.Header
@@ -6,7 +8,7 @@ import Network.Wai.Handler.Warp (run)
 
 app :: Request -> (Response -> t) -> t
 app request respond
-  | isTracking = respond tracking
+  | isTracking = respond $ tracking request
   | otherwise  = respond notFound
   where isTracking = elem pathRoot ["w", "k"]
         pathRoot = (head $ pathInfo request)
@@ -16,15 +18,17 @@ main = do
   putStrLn "Server started on: http://localhost:8080/"
   run 8080 app
 
-defaultHeader
-  :: [(HeaderName, Data.ByteString.Internal.ByteString)]
 defaultHeader = [(hContentType, "text/plain")]
 
-tracking :: Response
-tracking = responseLBS
+formatQueryItem :: QueryItem -> B.ByteString
+formatQueryItem (k, Just v) = B.concat [k, ": ",  v, "\n"]
+formatQueryItem (k, Nothing) = k
+
+tracking :: Request -> Response
+tracking request = responseLBS
   status200
   defaultHeader
-  "200 - Tracking call received"
+  $ BL.fromStrict $ B.concat $ map formatQueryItem $ queryString request
 
 notFound :: Response
 notFound = responseLBS
