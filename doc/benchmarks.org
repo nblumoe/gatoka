@@ -1,0 +1,33 @@
+* Benchmarking the throughput
+
+  Depends on [[https://github.com/wg/wrk][wrk]], available via =brew install wrk=
+
+** Benchmark command and results
+
+   #+BEGIN_SRC bash :results verbatim prepend
+   printf "Date: "
+   date
+   printf "git SHA: "
+   git rev-parse HEAD
+   wrk -t8 -c100 -d30s --latency "http://localhost:8080/w?a=b"
+   #+END_SRC
+
+   #+RESULTS:
+   #+begin_example
+   Date: Wed Jun  8 21:44:18 CEST 2016
+   git SHA: 2cc913a69ed3e95184f567a4903b0e734e841f61
+   Running 30s test @ http://localhost:8080/w?a=b
+     8 threads and 100 connections
+     Thread Stats   Avg      Stdev     Max   +/- Stdev
+       Latency   583.57ms  247.63ms 770.49ms   66.67%
+       Req/Sec     4.72      8.61    31.00     88.00%
+     Latency Distribution
+        50%  770.48ms
+        75%  770.49ms
+        90%  770.49ms
+        99%  770.49ms
+     102 requests in 30.07s, 14.84KB read
+     Socket errors: connect 0, read 0, write 0, timeout 96
+   Requests/sec:      3.39
+   Transfer/sec:     505.35B
+   #+end_example
