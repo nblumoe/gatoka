@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+import           Control.Concurrent
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import           Haskakafka
@@ -7,34 +8,31 @@ import           Network.HTTP.Types.Header
 import           Network.Wai
 import           Network.Wai.Handler.Warp (run)
 
-
-app :: Application
-app request respond
+app:: KafkaTopic -> Application
+app topic request respond
   | isTracking = do
-      _ <- produceTrackingMessage payload
+      _ <- forkIO $ produceTrackingMessage topic payload
       respond $ tracking $ BL.fromStrict payload
   | otherwise  = respond notFound
-  where isTracking = elem pathRoot ["w", "k"]
-        pathRoot = (head $ pathInfo request)
+  where isTracking = pathRoot `elem` ["w", "k"]
+        pathRoot = head $ pathInfo request
         payload = payloadFromRequest request
 
-produceTrackingMessage :: B.ByteString -> IO ()
-produceTrackingMessage payload = do
-  let
-    kafkaConfig = [("socket.timeout.ms", "50000")]
-    topicConfig = [("request.timeout.ms", "50000")]
-
-  withKafkaProducer kafkaConfig topicConfig
-    "broker1:9092" "sandbox"
-    $ \_ topic -> do
-    let message = KafkaProduceMessage payload
-    _ <- produceMessage topic (KafkaSpecifiedPartition 0) message
-    putStrLn "Done producing messages"
+produceTrackingMessage :: KafkaTopic -> B.ByteString -> IO ()
+produceTrackingMessage topic payload = do
+  let message = KafkaProduceMessage payload
+  _ <- produceMessage topic KafkaUnassignedPartition message
+  return ()
 
 main :: IO ()
 main = do
+  let
+    kafkaConfig = [("socket.timeout.ms", "50000")]
+    topicConfig = [("request.timeout.ms", "50000")]
   putStrLn "Server started on: http://localhost:8080/"
-  run 8080 app
+  withKafkaProducer kafkaConfig topicConfig
+    "broker2:9092" "sandbox"
+    $ \_ topic -> run 8080 $ app topic
 
 defaultHeader :: [(HeaderName, B.ByteString)]
 defaultHeader = [(hContentType, "text/plain")]
