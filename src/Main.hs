@@ -1,40 +1,68 @@
 {-# LANGUAGE OverloadedStrings #-}
-import Control.Concurrent
-import Control.Monad (forever)
-import Control.Concurrent.Chan
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
+import           Control.Concurrent
+import           Control.Monad             (forever)
+import qualified Data.ByteString           as B
+import qualified Data.ByteString.Lazy      as BL
+import           Data.String
+import qualified Data.Text as T
 import           Haskakafka
+import           Haskakafka.InternalSetup
 import           Network.HTTP.Types
 import           Network.HTTP.Types.Header ()
 import           Network.Wai
-import           Network.Wai.Handler.Warp (run)
+import           Network.Wai.Handler.Warp  (run)
+
+producer
+  :: Haskakafka.InternalSetup.ConfigOverrides
+     -> Haskakafka.InternalSetup.ConfigOverrides
+     -> String
+     -> Chan B.ByteString
+     -> IO a
+producer kafkaConfig topicConfig topicName channel =
+  withKafkaProducer kafkaConfig topicConfig
+    "broker2:9092" topicName
+    $ \_ topic ->  forever $ do
+        payload <- readChan channel
+        produceMessage topic KafkaUnassignedPartition
+          $ KafkaProduceMessage payload
+
+startProducer
+  :: Haskakafka.InternalSetup.ConfigOverrides
+     -> Haskakafka.InternalSetup.ConfigOverrides
+     -> [Char]
+     -> IO ([Char], Chan B.ByteString)
+startProducer kafkaConfig topicConfig topic = do
+  putStrLn $ "Starting producer client for topic: " ++ topic
+  channel <- newChan
+  _ <- forkIO $ producer kafkaConfig topicConfig topic channel
+  return (topic, channel)
 
 main :: IO ()
 main = do
   let
     kafkaConfig = [("socket.timeout.ms", "50000")]
     topicConfig = [("request.timeout.ms", "50000")]
-  putStrLn "Server started on: http://localhost:8080/"
-  producerChan <- newChan
-  _ <- forkIO $ withKafkaProducer kafkaConfig topicConfig
-    "broker2:9092" "sandbox"
-    $ \_ topic ->  forever $ do
-    payload <- readChan producerChan
-    produceMessage topic KafkaUnassignedPartition
-      $ KafkaProduceMessage payload
-  run 8080 $ app jsonFromRequest producerChan
+    topics      = ["a","b","c", "d"]
+  channels <- mapM (startProducer kafkaConfig topicConfig) topics
+  putStrLn "Starting server on: http://localhost:8080/"
+  run 8080 $ app jsonFromRequest channels topics
 
 app
-  :: (Request -> B.ByteString)
-     -> Chan B.ByteString -> Request -> (Response -> IO b) -> IO b
-app payloadFromRequest producerChan request respond
-  | isTracking = do
-      writeChan producerChan payload
+  :: Foldable t =>
+     (Request -> B.ByteString)
+     -> [(String, Chan B.ByteString)]
+     -> t String
+     -> Request
+     -> (Response -> IO b)
+     -> IO b
+app payloadFromRequest producerChannels topics request respond
+  | hasTopic = do
+      _ <- writeChan channel payload
       respond $ messageProduced $ BL.fromStrict payload
   | otherwise  = respond notFound
-  where isTracking = pathRoot `elem` ["w", "k"]
-        pathRoot = head $ pathInfo request
+  where hasTopic = pathRoot `elem` topics
+        (Just channel) = lookup pathRoot producerChannels
+        pathRoot = T.unpack $ head $ pathInfo request
         payload = payloadFromRequest request
 
 -- Payload handling

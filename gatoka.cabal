@@ -61,6 +61,7 @@ executable gatoka
                      , bytestring >= 0.10.6.0
                      , haskakafka
                      , http-types
+                     , text >= 1.2.2.1
                      , wai
                      , warp
 
