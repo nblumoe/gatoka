@@ -2,9 +2,11 @@
 import           Control.Concurrent
 import           Control.Monad             (forever)
 import qualified Data.ByteString           as B
+import qualified Data.ByteString.Char8     as C
 import qualified Data.ByteString.Lazy      as BL
 import           Data.String
-import qualified Data.Text as T
+import qualified Data.Text                 as T
+import qualified Data.Text.Encoding        as TE
 import           Haskakafka
 import           Haskakafka.InternalSetup
 import           Network.HTTP.Types
@@ -15,24 +17,24 @@ import           Network.Wai.Handler.Warp  (run)
 producer
   :: Haskakafka.InternalSetup.ConfigOverrides
      -> Haskakafka.InternalSetup.ConfigOverrides
-     -> String
+     -> B.ByteString
      -> Chan B.ByteString
      -> IO a
 producer kafkaConfig topicConfig topicName channel =
   withKafkaProducer kafkaConfig topicConfig
-    "broker2:9092" topicName
+    "broker2:9092" (C.unpack topicName)
     $ \_ topic ->  forever $ do
         payload <- readChan channel
         produceMessage topic KafkaUnassignedPartition
           $ KafkaProduceMessage payload
 
 startProducer
-  :: Haskakafka.InternalSetup.ConfigOverrides
+    :: Haskakafka.InternalSetup.ConfigOverrides
      -> Haskakafka.InternalSetup.ConfigOverrides
-     -> [Char]
-     -> IO ([Char], Chan B.ByteString)
+     -> B.ByteString
+     -> IO (B.ByteString, Chan B.ByteString)
 startProducer kafkaConfig topicConfig topic = do
-  putStrLn $ "Starting producer client for topic: " ++ topic
+  C.putStrLn $ B.append "Starting producer client for topic: " topic
   channel <- newChan
   _ <- forkIO $ producer kafkaConfig topicConfig topic channel
   return (topic, channel)
@@ -45,24 +47,21 @@ main = do
     topics      = ["a","b","c", "d"]
   channels <- mapM (startProducer kafkaConfig topicConfig) topics
   putStrLn "Starting server on: http://localhost:8080/"
-  run 8080 $ app jsonFromRequest channels topics
+  run 8080 $ app jsonFromRequest channels
 
 app
-  :: Foldable t =>
-     (Request -> B.ByteString)
-     -> [(String, Chan B.ByteString)]
-     -> t String
-     -> Request
-     -> (Response -> IO b)
-     -> IO b
-app payloadFromRequest producerChannels topics request respond
-  | hasTopic = do
+  :: (Request -> B.ByteString)
+  -> [(B.ByteString, Chan B.ByteString)]
+  -> Application
+app payloadFromRequest producerChannels request respond
+  | Just channel <- maybeChannel = do
       _ <- writeChan channel payload
       respond $ messageProduced $ BL.fromStrict payload
+  | Nothing <- maybeChannel = do
+      respond $ topicNotFound $ BL.fromStrict topic
   | otherwise  = respond notFound
-  where hasTopic = pathRoot `elem` topics
-        (Just channel) = lookup pathRoot producerChannels
-        pathRoot = T.unpack $ head $ pathInfo request
+  where topic = TE.encodeUtf8 $ head $ pathInfo request -- make topic finding function plugable
+        maybeChannel = lookup topic producerChannels
         payload = payloadFromRequest request
 
 -- Payload handling
@@ -87,6 +86,12 @@ messageProduced :: BL.ByteString -> Response
 messageProduced = responseLBS
   status200
   defaultHeader
+
+topicNotFound :: BL.ByteString -> Response
+topicNotFound topic = responseLBS
+  status400
+  defaultHeader
+  $ BL.append "400 - Topic not found: " topic
 
 notFound :: Response
 notFound = responseLBS
