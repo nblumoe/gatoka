@@ -4,6 +4,7 @@ import           Control.Monad             (forever)
 import qualified Data.ByteString           as B
 import qualified Data.ByteString.Char8     as C
 import qualified Data.ByteString.Lazy      as BL
+import Data.Maybe
 import           Data.String
 import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as TE
@@ -28,12 +29,12 @@ producer kafkaConfig topicConfig topicName channel =
         produceMessage topic KafkaUnassignedPartition
           $ KafkaProduceMessage payload
 
-startProducer
+startProducerThread
     :: Haskakafka.InternalSetup.ConfigOverrides
      -> Haskakafka.InternalSetup.ConfigOverrides
      -> B.ByteString
      -> IO (B.ByteString, Chan B.ByteString)
-startProducer kafkaConfig topicConfig topic = do
+startProducerThread kafkaConfig topicConfig topic = do
   C.putStrLn $ B.append "Starting producer client for topic: " topic
   channel <- newChan
   _ <- forkIO $ producer kafkaConfig topicConfig topic channel
@@ -45,37 +46,32 @@ main = do
     kafkaConfig = [("socket.timeout.ms", "50000")]
     topicConfig = [("request.timeout.ms", "50000")]
     topics      = ["a","b","c", "d"]
-  channels <- mapM (startProducer kafkaConfig topicConfig) topics
+    path        = "/tracking"
+  channels <- mapM (startProducerThread kafkaConfig topicConfig) topics
   putStrLn "Starting server on: http://localhost:8080/"
-  run 8080 $ app jsonFromRequest channels
+  run 8080 $ app jsonFromQueryString topicFromHost path channels
 
 app
   :: (Request -> B.ByteString)
+  -> (Request -> B.ByteString)
+  -> B.ByteString
   -> [(B.ByteString, Chan B.ByteString)]
   -> Application
-app payloadFromRequest producerChannels request respond
-  | Just channel <- maybeChannel = do
-      _ <- writeChan channel payload
-      respond $ messageProduced $ BL.fromStrict payload
-  | Nothing <- maybeChannel = do
-      respond $ topicNotFound $ BL.fromStrict topic
-  | otherwise  = respond notFound
-  where topic = TE.encodeUtf8 $ head $ pathInfo request -- make topic finding function plugable
+app payloadFromRequest topicFromRequest path producerChannels request respond
+  | path == (rawPathInfo request) = pushPayload maybeChannel payload topic >>= respond
+  | otherwise                     = respond notFound
+  where topic        = topicFromRequest request
         maybeChannel = lookup topic producerChannels
-        payload = payloadFromRequest request
+        payload      = payloadFromRequest request
 
--- Payload handling
-
-jsonFromRequest :: Request -> B.ByteString
-jsonFromRequest request = B.concat ["{", query_items, "}"]
-  where query_items = B.intercalate ", " $ map formatQueryItem $ queryString request
-
-formatQueryItem :: QueryItem -> B.ByteString
-formatQueryItem ("", _) = ""
-formatQueryItem (k, Nothing) = B.append k ": undefined"
-formatQueryItem (k, Just v)
-  | v == "" = B.append k ": undefined"
-  | otherwise = B.concat [k, ": ",  v]
+pushPayload
+  :: Maybe (Chan C.ByteString)
+     -> C.ByteString -> C.ByteString -> IO Response
+pushPayload (Just channel) payload _ = do
+  _ <- writeChan channel payload
+  return $ messageProduced $ BL.fromStrict payload
+pushPayload Nothing _ topic = do
+  return $ topicNotFound $ BL.fromStrict topic
 
 -- Response handling
 
@@ -98,3 +94,24 @@ notFound = responseLBS
   status404
   defaultHeader
   "404 - Not Found"
+
+-- the following will be provided by the calling application / library
+
+-- Topic extracion
+topicFromPathRoot :: Request -> C.ByteString
+topicFromPathRoot request = TE.encodeUtf8 $ head $ pathInfo request
+
+topicFromHost :: Request -> C.ByteString
+topicFromHost request = C.takeWhile (/= '.') $ fromMaybe "" $ requestHeaderHost request
+
+-- Payload handling
+jsonFromQueryString :: Request -> B.ByteString
+jsonFromQueryString request = B.concat ["{", query_items, "}"]
+  where query_items = B.intercalate ", " $ map formatQueryItem $ queryString request
+
+formatQueryItem :: QueryItem -> B.ByteString
+formatQueryItem ("", _) = ""
+formatQueryItem (k, Nothing) = B.append k ": undefined"
+formatQueryItem (k, Just v)
+  | v == "" = B.append k ": undefined"
+  | otherwise = B.concat [k, ": ",  v]
