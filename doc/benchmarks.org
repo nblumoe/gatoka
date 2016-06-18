@@ -14,6 +14,23 @@
 
    #+RESULTS:
    #+begin_example
+   Date: Sat Jun 18 21:47:30 CEST 2016
+   git SHA: 70745b0bafd56fd6ff6f3fba0f9b7c72d92d969e
+   Running 30s test @ http://localhost:8080/w?a=b
+     8 threads and 100 connections
+     Thread Stats   Avg      Stdev     Max   +/- Stdev
+       Latency    30.96ms  136.02ms   1.24s    95.15%
+       Req/Sec     6.48k     1.38k   14.24k    79.28%
+     Latency Distribution
+        50%    1.54ms
+        75%    3.16ms
+        90%   10.26ms
+        99%  839.74ms
+     1447287 requests in 30.10s, 205.66MB read
+   Requests/sec:  48081.24
+   Transfer/sec:      6.83MB
+   #+end_example
+   #+begin_example
    Date: Thu Jun  9 09:55:51 CEST 2016
    git SHA: 0983a0cf218db3b2dceb0c65f35304c82bbca3b8
    Running 30s test @ http://localhost:8080/w?a=b
