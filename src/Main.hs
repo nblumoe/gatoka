@@ -8,6 +8,8 @@ import           Data.Maybe
 import           Data.String
 import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as TE
+import           Data.Word (Word16)
+import qualified Data.Yaml.Config          as Y
 import           Haskakafka
 import           Haskakafka.InternalSetup
 import           Network.HTTP.Types
@@ -15,41 +17,52 @@ import           Network.HTTP.Types.Header ()
 import           Network.Wai
 import           Network.Wai.Handler.Warp  (run)
 
-producer
-  :: Haskakafka.InternalSetup.ConfigOverrides
-     -> Haskakafka.InternalSetup.ConfigOverrides
-     -> B.ByteString
-     -> Chan B.ByteString
-     -> IO a
-producer kafkaConfig topicConfig topicName channel =
-  withKafkaProducer kafkaConfig topicConfig
-    "broker1:9092" (C.unpack topicName)
-    $ \_ topic ->  forever $ do
-        payload <- getChanContents channel
-        produceMessageBatch topic KafkaUnassignedPartition
-          $ map KafkaProduceMessage payload
 
-startProducerThread
-    :: Haskakafka.InternalSetup.ConfigOverrides
-     -> Haskakafka.InternalSetup.ConfigOverrides
-     -> B.ByteString
-     -> IO (B.ByteString, Chan B.ByteString)
-startProducerThread kafkaConfig topicConfig topic = do
+producer ::
+  Y.Config
+  -> ConfigOverrides
+  -> ConfigOverrides
+  -> C.ByteString
+  -> Chan C.ByteString
+  -> IO a
+producer brokerConfig kafkaConfig topicConfig topicName channel =
+  let
+    host = Y.lookupDefault "host" "localhost" brokerConfig
+    port = Y.lookupDefault "port" 9021 brokerConfig :: Word16
+  in
+    withKafkaProducer kafkaConfig topicConfig
+      (host ++ ":" ++ show port) (C.unpack topicName)
+      $ \_ topic ->  forever $ do
+          payload <- getChanContents channel
+          produceMessageBatch topic KafkaUnassignedPartition
+            $ map KafkaProduceMessage payload
+
+startProducerThread ::
+  Y.Config
+  -> ConfigOverrides
+  -> ConfigOverrides
+  -> C.ByteString
+  -> IO (C.ByteString, Chan C.ByteString)
+startProducerThread brokerConfig kafkaConfig topicConfig topic = do
   C.putStrLn $ B.append "Starting producer client for topic: " topic
   channel <- newChan
-  _ <- forkIO $ producer kafkaConfig topicConfig topic channel
+  _ <- forkIO $ producer brokerConfig kafkaConfig topicConfig topic channel
   return (topic, channel)
 
 main :: IO ()
 main = do
+  config <- Y.load "./config/gatoka.yml"
+  serverConfig <- Y.subconfig "server" config
+  brokerConfig <- Y.subconfig "broker" config
   let
+    port        = Y.lookupDefault "port" 8080 serverConfig
+    topics      = Y.lookupDefault "topics" ["dummy"] serverConfig :: [String]
+    path        = Y.lookupDefault "path" "/" serverConfig :: String
     kafkaConfig = [("socket.timeout.ms", "50000")]
     topicConfig = [("request.timeout.ms", "50000")]
-    topics      = ["w"]
-    path        = "/w"
-  channels <- mapM (startProducerThread kafkaConfig topicConfig) topics
-  putStrLn "Starting server on: http://localhost:8080/"
-  run 8080 $ app jsonFromQueryString topicFromPathRoot path channels
+  channels <- mapM (startProducerThread brokerConfig kafkaConfig topicConfig . C.pack) topics
+  putStrLn $ "Starting server on: http://localhost:" ++ show port
+  run port $ app jsonFromQueryString topicFromPathRoot (C.pack path) channels
 
 app
   :: (Request -> B.ByteString)

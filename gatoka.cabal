@@ -64,6 +64,7 @@ executable gatoka
                      , text >= 1.2.2.1
                      , wai
                      , warp
+                     , yaml-config
 
   -- Directories containing source files.
   hs-source-dirs:      src

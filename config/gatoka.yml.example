@@ -1,0 +1,10 @@
+server:
+  port: 8080
+  topics:
+    - 'a'
+    - 'b'
+    - 'w'
+  path: '/w'
+broker:
+  host: 'broker1'
+  port: 9092
