@@ -58,8 +58,8 @@ app
   -> [(B.ByteString, Chan B.ByteString)]
   -> Application
 app payloadFromRequest topicFromRequest path producerChannels request respond
-  | path == (rawPathInfo request) = pushPayload maybeChannel payload topic >>= respond
-  | otherwise                     = respond notFound
+  | path == rawPathInfo request = pushPayload maybeChannel payload topic >>= respond
+  | otherwise                   = respond notFound
   where topic        = topicFromRequest request
         maybeChannel = lookup topic producerChannels
         payload      = payloadFromRequest request
@@ -70,8 +70,7 @@ pushPayload
 pushPayload (Just channel) payload _ = do
   _ <- writeChan channel payload
   return $ messageProduced $ BL.fromStrict payload
-pushPayload Nothing _ topic = do
-  return $ topicNotFound $ BL.fromStrict topic
+pushPayload Nothing _ topic = return $ topicNotFound $ BL.fromStrict topic
 
 -- Response handling
 
