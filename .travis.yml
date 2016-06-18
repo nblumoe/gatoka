@@ -1,5 +1,5 @@
 # Use new container infrastructure to enable caching
-sudo: false
+sudo: yes
 
 # Choose a lightweight base image; we provide our own build tools.
 language: c
