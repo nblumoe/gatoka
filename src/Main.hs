@@ -4,7 +4,7 @@ import           Control.Monad             (forever)
 import qualified Data.ByteString           as B
 import qualified Data.ByteString.Char8     as C
 import qualified Data.ByteString.Lazy      as BL
-import Data.Maybe
+import           Data.Maybe
 import           Data.String
 import qualified Data.Text                 as T
 import qualified Data.Text.Encoding        as TE
@@ -23,11 +23,11 @@ producer
      -> IO a
 producer kafkaConfig topicConfig topicName channel =
   withKafkaProducer kafkaConfig topicConfig
-    "broker2:9092" (C.unpack topicName)
+    "broker1:9092" (C.unpack topicName)
     $ \_ topic ->  forever $ do
-        payload <- readChan channel
-        produceMessage topic KafkaUnassignedPartition
-          $ KafkaProduceMessage payload
+        payload <- getChanContents channel
+        produceMessageBatch topic KafkaUnassignedPartition
+          $ map KafkaProduceMessage payload
 
 startProducerThread
     :: Haskakafka.InternalSetup.ConfigOverrides
@@ -45,11 +45,11 @@ main = do
   let
     kafkaConfig = [("socket.timeout.ms", "50000")]
     topicConfig = [("request.timeout.ms", "50000")]
-    topics      = ["a","b","c", "d"]
-    path        = "/tracking"
+    topics      = ["w"]
+    path        = "/w"
   channels <- mapM (startProducerThread kafkaConfig topicConfig) topics
   putStrLn "Starting server on: http://localhost:8080/"
-  run 8080 $ app jsonFromQueryString topicFromHost path channels
+  run 8080 $ app jsonFromQueryString topicFromPathRoot path channels
 
 app
   :: (Request -> B.ByteString)
@@ -64,11 +64,15 @@ app payloadFromRequest topicFromRequest path producerChannels request respond
         maybeChannel = lookup topic producerChannels
         payload      = payloadFromRequest request
 
+-- some stripped down apps for testing purposes
+rawApp channel _ respond = pushPayload channel "raw-payload" "raw" >>= respond
+dummyApp _ respond = respond notFound
+
 pushPayload
   :: Maybe (Chan C.ByteString)
      -> C.ByteString -> C.ByteString -> IO Response
 pushPayload (Just channel) payload _ = do
-  _ <- writeChan channel payload
+  _ <- forkIO $ writeChan channel payload
   return $ messageProduced $ BL.fromStrict payload
 pushPayload Nothing _ topic = return $ topicNotFound $ BL.fromStrict topic
 
